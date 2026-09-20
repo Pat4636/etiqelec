@@ -1,6 +1,6 @@
 # Étiqélec Smart
 
-Version web mobile d'**Étiqélec**, logiciel d'étiquetage pour tableau électrique — créé et designé par Patrick Siry.
+Version web mobile d'**Étiqélec**, logiciel d'étiquetage pour tableau électrique — créé et designé par AistudioPress.
 
 🔗 **Application en ligne : https://pat4636.github.io/etiqelec/**
 
