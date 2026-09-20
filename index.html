@@ -1041,7 +1041,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     <button class="ribbon-iconbtn" id="redoBtn" onclick="redo()" disabled title="Rétablir (Ctrl+Y)">↷</button>
     <div class="spacer"></div>
     <button class="btn primary" onclick="startPrint()">Imprimer</button>
-    <button class="btn" id="shareBtn" onclick="shareOrExportPdf()" title="Générer un PDF et l'envoyer par email/SMS/messagerie">Partager</button>
+    <button class="btn" id="shareBtn" onclick="shareOrExportPdf()" title="Générer et afficher le PDF, avec un bouton Partager séparé ensuite">PDF</button>
   </nav>
 
   <div class="ribbon-panel" id="panel-coffret" hidden>
@@ -1276,7 +1276,16 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
       <h2>Aperçu du PDF</h2>
       <button class="modal-close" onclick="closePdfPreview()" title="Fermer">×</button>
     </div>
-    <iframe id="pdfPreviewFrame" title="Aperçu du PDF des étiquettes" style="flex:1; width:100%; border:1px solid #c4ccd3; border-radius:6px; min-height:0;"></iframe>
+    <style>
+      #pdfPreviewContent .no-print{ display:none !important; }
+      #pdfPreviewContent .cartouche{ display:flex !important; }
+      #pdfPreviewContent .terre-tension-row{ display:flex !important; }
+      #pdfPreviewContent .module-cell{ cursor:default; }
+      #pdfPreviewContent .module-cell.selected{ background:none !important; box-shadow:none !important; }
+      #pdfPreviewContent .sheet{ box-shadow:none; }
+      #pdfPreviewContent .legend-preview-sheet{ margin-top:6mm; padding-top:6mm; border-top:2px dashed #a9b4bd; background:#fff; border-radius:8px; padding:4mm; }
+    </style>
+    <div id="pdfPreviewContent" style="flex:1; width:100%; overflow:auto; border:1px solid #c4ccd3; border-radius:6px; min-height:0; padding:4mm; background:#f0f2f4;"></div>
     <div style="display:flex; justify-content:flex-end; gap:2mm; margin-top:3mm;">
       <button class="btn" onclick="closePdfPreview()">Fermer</button>
       <button class="btn primary" onclick="shareCurrentPdf()">Partager</button>
@@ -2890,12 +2899,16 @@ function qrToSvg(text, sizeMm){
   return '<svg viewBox="0 0 100 100" class="cartouche-qr-svg" shape-rendering="crispEdges" aria-label="QR code coordonnées"><rect width="100" height="100" fill="#fff"/><g fill="#000">'+rects+'</g></svg>';
 }
 function vcardEscape(v){ return String(v||'').replace(/([\\,;])/g, '\\$1').replace(/\n/g, '\\n'); }
-function buildVCard(company, phone, email, website){
+function buildVCard(company, phone, email, website, address){
   /* Format vCard 3.0 : reconnu comme "ajouter un contact" par la quasi-totalité des lecteurs
      de QR code (iPhone, Android, Google Lens...), contrairement à MECARD (peu reconnu hors
      de quelques lecteurs japonais/spécifiques, affiché en texte brut ailleurs). */
   var fn = company ? vcardEscape(company) : '';
   var fnBlock = fn ? ('FN:'+fn+'\nN:;'+fn+';;;\n') : '';
+  /* ADR ne comporte qu'une seule ligne d'adresse libre côté Étiqélec (pas de rue/ville/CP
+     séparés) : on la place dans la composante "adresse" (3e champ), les autres restant vides —
+     accepté par tous les lecteurs de contacts usuels. */
+  var adrBlock = address ? ('ADR:;;'+vcardEscape(address)+';;;;\n') : '';
   var combos = [
     [['TEL',phone],['EMAIL',email],['URL',website]],
     [['TEL',phone],['EMAIL',email]],
@@ -2903,17 +2916,25 @@ function buildVCard(company, phone, email, website){
     [['EMAIL',email],['URL',website]],
     [['TEL',phone]], [['EMAIL',email]], [['URL',website]]
   ];
-  function tryCombos(withFn){
+  /* Le générateur QR interne ne gère que les versions 1-5 (capacité limitée) : on essaie donc
+     d'abord d'inclure l'adresse, puis on l'abandonne si le résultat ne rentre dans aucune
+     version supportée — plutôt que d'échouer entièrement à générer un QR utilisable. */
+  function tryCombos(withFn, withAdr){
     for (var i = 0; i < combos.length; i++){
       var filtered = combos[i].filter(function(p){ return p[1]; });
-      if (filtered.length === 0) continue;
+      if (filtered.length === 0 && !(withAdr && adrBlock)) continue;
       var body = filtered.map(function(p){ return p[0]+':'+vcardEscape(p[1])+'\n'; }).join('');
-      var s = 'BEGIN:VCARD\nVERSION:3.0\n' + (withFn ? fnBlock : '') + body + 'END:VCARD';
+      var s = 'BEGIN:VCARD\nVERSION:3.0\n' + (withFn ? fnBlock : '') + (withAdr ? adrBlock : '') + body + 'END:VCARD';
       if (qrEncode(s)) return s;
     }
     return null;
   }
-  return tryCombos(true) || (fnBlock ? tryCombos(false) : null);
+  /* Priorité à l'adresse plutôt qu'au nom de société si tout ne rentre pas : le nom apparaît
+     déjà imprimé juste à côté du QR dans la cartouche, contrairement à l'adresse. */
+  return tryCombos(true, true)
+    || (fnBlock ? tryCombos(false, true) : null)
+    || tryCombos(true, false)
+    || (fnBlock ? tryCombos(false, false) : null);
 }
 
 /* ---------- Cartouche (coordonnées + QR, intégré en tête du tableau) ---------- */
@@ -2932,7 +2953,7 @@ function renderCartoucheCompanyInfo(){
   const logoEl = document.getElementById('cartoucheLogo');
   if(info.logo){ logoEl.src = info.logo; logoEl.hidden = false; } else { logoEl.hidden = true; logoEl.src = ''; }
   const qrWrap = document.getElementById('cartoucheQr');
-  const vcard = buildVCard(info.company, info.phone, info.email, info.website);
+  const vcard = buildVCard(info.company, info.phone, info.email, info.website, info.address);
   if(vcard){
     qrWrap.innerHTML = qrToSvg(vcard, 26);
     qrWrap.hidden = false;
@@ -3269,7 +3290,7 @@ async function drawPdfCartouche(pdf, x, y, wMm, info){
   const dateDisplay = dateValue ? new Date(dateValue+'T00:00:00').toLocaleDateString('fr-FR') : '';
   pdf.text(dateDisplay, rightX + 2, y + 25.3);
 
-  const vcard = buildVCard(info.company, info.phone, info.email, info.website);
+  const vcard = buildVCard(info.company, info.phone, info.email, info.website, info.address);
   const qrImg = await getQrImageForPdf(vcard);
   if(qrImg){
     pdf.addImage(qrImg.dataUrl, 'PNG', x + wMm - qrImg.wMm - 4, y + (hMm - qrImg.hMm)/2, qrImg.wMm, qrImg.hMm);
@@ -3421,7 +3442,36 @@ function downloadPdfAndOpenMail(blob, filename){
     window.location.href = 'mailto:?subject=' + subject + '&body=' + body;
   }, 600);
 }
-let _currentPdfBlob = null, _currentPdfFilename = null, _currentPdfUrl = null;
+let _currentPdfBlob = null, _currentPdfFilename = null;
+/* Aperçu affiché dans la fenêtre modale : un vrai lecteur PDF intégré (<iframe src="blob:...">)
+   ne s'affiche pas de façon fiable dans Chrome pour Android (cadre vide, bouton "Ouvrir" inerte,
+   remonté par un utilisateur) — contrairement à Chrome desktop qui a un lecteur PDF intégré.
+   On construit donc l'aperçu à partir des mêmes éléments HTML que l'utilisateur voit déjà à
+   l'écran (cartouche, Terre/Tension, bandeaux, feuille de repérage) : un rendu garanti sur
+   n'importe quel navigateur puisque ce n'est que du HTML/CSS classique, pas un PDF. Le fichier
+   réellement partagé/enregistré reste le PDF vectoriel généré par generateLabelsPdfBlob().*/
+function buildPdfPreviewHtml(){
+  const parts = [];
+  const cartouche = document.getElementById('cartoucheBlock');
+  const terre = document.getElementById('terreTensionRow');
+  if(cartouche) parts.push(cartouche.outerHTML);
+  if(terre) parts.push(terre.outerHTML);
+  const sheet = document.getElementById('sheet');
+  if(sheet) parts.push(sheet.outerHTML);
+  const entries = collectLegendEntries();
+  if(entries.length > 0){
+    let legendHtml = '<div class="legend-preview-sheet">';
+    legendHtml += '<h2 style="font-size:16px;color:#1c2b36;margin:0 0 3mm;">Feuille de repérage</h2>';
+    legendHtml += '<table class="legend-table-screen"><thead><tr><th>N°</th><th>Destination / Équipement</th><th>Pièce(s)</th></tr></thead><tbody>'
+      + entries.map(e => `<tr><td>${escapeHtml(String(e.number))}</td><td>${escapeHtml(e.text || '—')}</td><td>${escapeHtml(e.piece || '—')}</td></tr>`).join('')
+      + '</tbody></table></div>';
+    parts.push(legendHtml);
+  }
+  /* Les attributs onXXX inline restent actifs même après réinjection en tant que nouveau HTML :
+     on les retire pour que l'aperçu soit purement visuel (aucune action ne doit modifier le
+     tableau réel pendant qu'on le consulte). */
+  return parts.join('').replace(/\son\w+="[^"]*"/g, '');
+}
 function closePdfPreview(){
   document.getElementById('pdfPreviewModal').style.display = 'none';
 }
@@ -3460,11 +3510,9 @@ async function shareOrExportPdf(){
     showToast('Rien à partager : le tableau est vide.', 3000);
     return;
   }
-  if(_currentPdfUrl) URL.revokeObjectURL(_currentPdfUrl);
   _currentPdfBlob = result.blob;
   _currentPdfFilename = result.filename;
-  _currentPdfUrl = URL.createObjectURL(result.blob);
-  document.getElementById('pdfPreviewFrame').src = _currentPdfUrl;
+  document.getElementById('pdfPreviewContent').innerHTML = buildPdfPreviewHtml();
   document.getElementById('pdfPreviewModal').style.display = 'flex';
 }
 
