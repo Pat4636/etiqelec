@@ -1021,6 +1021,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     <button class="help-btn" id="fullscreenBtn" onclick="toggleFullscreen()" title="Plein écran (masque la barre du navigateur)">⛶</button>
     <button class="help-btn" onclick="newProject()" title="Recommencer avec un tableau vierge">Nouveau</button>
     <button class="help-btn" onclick="openHelp()">Aide</button>
+    <button class="help-btn" onclick="openAbout()">À propos</button>
     <button class="help-btn" onclick="attemptClose()" title="Fermer Étiqélec">Fermer</button>
   </div>
 </header>
@@ -1253,6 +1254,19 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
       <span>© Étiqélec — Créé et designé par Patrick Siry</span>
       <span><a href="mailto:aistudiopress@gmail.com">aistudiopress@gmail.com</a></span>
     </div>
+  </div>
+</div>
+
+<div class="modal-overlay no-print" id="aboutModal" style="display:none;" onclick="if(event.target===this) closeAbout()">
+  <div class="modal-box" style="max-width:110mm;">
+    <div class="modal-box-header">
+      <h2>À propos — Étiqélec</h2>
+      <button class="modal-close" onclick="closeAbout()" title="Fermer">×</button>
+    </div>
+    <p class="hint">Étiqélec Smart est la version mobile d'Étiqélec, logiciel d'étiquetage pour tableau électrique : coffrets de marque reconnus automatiquement, 83 pictogrammes, impression calibrée à l'échelle réelle, génération de PDF et partage direct (email, SMS, messagerie). Fonctionne entièrement hors-ligne, aucune donnée envoyée sur internet.</p>
+    <p class="hint">Propulsé par <b>AIStudioPress</b><br>Design par <b>Patrick Siry</b></p>
+    <p class="hint" id="aboutCopyright">© 2026 AIStudioPress. Tous droits réservés.</p>
+    <p class="hint"><a href="mailto:aistudiopress@gmail.com">aistudiopress@gmail.com</a></p>
   </div>
 </div>
 
@@ -3121,8 +3135,7 @@ async function rasterizeVerticalLabelForPdf(text, boxWidthPx, boxHeightPx, fontS
   octx.restore();
   return out.toDataURL('image/png');
 }
-async function captureForPdf(el, scale){
-  const printCss = getPrintOnlyCss();
+async function captureForPdf(el, scale, printCss){
   return html2canvas(el, {
     scale: scale,
     backgroundColor: '#ffffff',
@@ -3141,7 +3154,11 @@ async function captureForPdf(el, scale){
       const svgs = Array.from(clonedEl.querySelectorAll('svg'));
       for (const svg of svgs){
         try{
-          const png = await rasterizeIconSvgForPdf(svg, 128);
+          /* Le QR code a besoin de bien plus de résolution que les pictogrammes décoratifs pour
+             rester net (donc scannable) une fois compressé en JPEG : ses modules sont beaucoup
+             plus fins et nombreux qu'un simple badge rond. */
+          const isQr = svg.classList.contains('cartouche-qr-svg');
+          const png = await rasterizeIconSvgForPdf(svg, isQr ? 500 : 128);
           const img = clonedDoc.createElement('img');
           img.src = png;
           /* Garder uniquement la classe (ex. "pict-badge", taille fixe 10.5mm) sans forcer
@@ -3182,6 +3199,7 @@ async function generateLabelsPdfBlob(){
   document.documentElement.style.setProperty('--print-scale', 1);
   renderSheet();
   const hasLegend = prepareLegendPrintData();
+  const printCss = getPrintOnlyCss(); // calculé une seule fois (pas à chaque capture) : accélère la génération
 
   const scale = 1.6;
   const { jsPDF } = window.jspdf;
@@ -3191,9 +3209,15 @@ async function generateLabelsPdfBlob(){
   let pdf = null;
   let cursorY = marginMm;
 
+  /* La cartouche (coordonnées, QR code) et la ligne Terre/Tension s'affichent toujours à
+     l'impression réelle, qu'elles soient visibles à l'écran ou non à ce moment-là (voir doc,
+     étape 13) — on reproduit exactement ce comportement ici : toujours incluses en tête de PDF,
+     avant les bandeaux, indépendamment de l'état d'affichage courant du panneau Renseignement. */
+  const topEls = [document.getElementById('cartoucheBlock'), document.getElementById('terreTensionRow')]
+    .filter(function(el){ return el; });
   const bandeauEls = Array.from(document.querySelectorAll('#sheet .bandeau-print-split'));
-  for (const el of bandeauEls){
-    const canvas = await captureForPdf(el, scale);
+  for (const el of topEls.concat(bandeauEls)){
+    const canvas = await captureForPdf(el, scale, printCss);
     const widthMm = canvas.width / scale / PDF_PX_PER_MM;
     const heightMm = canvas.height / scale / PDF_PX_PER_MM;
     if(!pdf){
@@ -3208,7 +3232,7 @@ async function generateLabelsPdfBlob(){
 
   if(hasLegend){
     const legendEl = document.getElementById('legendPrintSheet');
-    const canvas = await captureForPdf(legendEl, scale);
+    const canvas = await captureForPdf(legendEl, scale, printCss);
     const wMm = canvas.width / scale / PDF_PX_PER_MM;
     const hMm = canvas.height / scale / PDF_PX_PER_MM;
     const usableLegendW = 210 - 15*2, usableLegendH = 297 - 15*2;
@@ -3585,6 +3609,14 @@ window.addEventListener('beforeprint', function(){ renderSheet(); });
 
 function openHelp(){
   document.getElementById('helpModal').style.display = 'flex';
+}
+function openAbout(){
+  const el = document.getElementById('aboutCopyright');
+  if(el) el.textContent = '© ' + new Date().getFullYear() + ' AIStudioPress. Tous droits réservés.';
+  document.getElementById('aboutModal').style.display = 'flex';
+}
+function closeAbout(){
+  document.getElementById('aboutModal').style.display = 'none';
 }
 function toggleHelpItem(btn){
   const body = btn.nextElementSibling;
