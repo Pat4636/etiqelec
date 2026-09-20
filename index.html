@@ -54,7 +54,7 @@
   --header-1: #1c4266;
   --header-2: #163350;
 }
-:root[data-theme="green"]{ --accent:#2fa35a; --accent-dark:#238049; --header-1:#1f4a3a; --header-2:#16362b; }
+:root[data-theme="green"]{ --accent:#2fa35a; --accent-dark:#238049; --header-1:#2fa35a; --header-2:#238049; }
 :root[data-theme="red"]{ --accent:#d1483f; --accent-dark:#a83a32; --header-1:#5a2a2a; --header-2:#421f1f; }
 :root[data-theme="yellow"]{ --accent:#c98f2e; --accent-dark:#a3721f; --header-1:#5a4620; --header-2:#453519; }
 :root[data-theme="purple"]{ --accent:#8a5fd1; --accent-dark:#6d47ac; --header-1:#3d2f5c; --header-2:#2e2447; }
@@ -3091,6 +3091,14 @@ async function captureForPdf(el, scale){
   return html2canvas(el, {
     scale: scale,
     backgroundColor: '#ffffff',
+    /* .content-pane/.sheet sont des blocs en largeur "auto", qui se dimensionnent toujours pour
+       remplir leur conteneur (comportement CSS normal) — à l'impression réelle, ce conteneur est
+       la PAGE physique (277mm utiles), d'où la bonne taille ; ici, sans réglage, ce serait la
+       largeur d'écran du téléphone (bien plus étroite). On donne donc à html2canvas une fenêtre
+       virtuelle large exactement comme la page imprimée (277mm), pour que le rendu ait la même
+       taille physique que sur papier, quel que soit l'écran de l'appareil. */
+    windowWidth: Math.round(277 * PDF_PX_PER_MM),
+    windowHeight: 2000,
     onclone: async function(clonedDoc, clonedEl){
       const styleTag = clonedDoc.createElement('style');
       styleTag.textContent = printCss;
