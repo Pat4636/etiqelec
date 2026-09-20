@@ -3144,9 +3144,11 @@ async function captureForPdf(el, scale){
           const png = await rasterizeIconSvgForPdf(svg, 128);
           const img = clonedDoc.createElement('img');
           img.src = png;
+          /* Garder uniquement la classe (ex. "pict-badge", taille fixe 10.5mm) sans forcer
+             width/height:100% : sinon l'icône s'agrandit pour remplir toute la largeur de sa
+             cellule, ce qui la rend plus grande que les autres sur les modules fusionnés
+             (pictogrammes 2/4/8 modules...) au lieu de garder sa taille réelle, centrée. */
           img.className = svg.getAttribute('class') || '';
-          img.style.width = '100%';
-          img.style.height = '100%';
           img.style.display = 'block';
           svg.replaceWith(img);
         }catch(e){ /* on garde le svg d'origine si la rasterisation échoue */ }
