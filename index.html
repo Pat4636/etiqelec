@@ -3086,6 +3086,41 @@ async function rasterizeIconSvgForPdf(svgEl, pxSize){
   _pdfIconRasterCache.set(key, png);
   return png;
 }
+/* html2canvas ne sait pas non plus restituer "writing-mode:vertical-rl" (utilisé par le texte
+   à 90°, option "Texte à 90°") : le texte apparaît horizontal et les lignes se superposent au
+   lieu de s'empiler. On dessine donc ce texte pivoté nous-mêmes sur un <canvas> (texte normal
+   dessiné à plat puis pivoté de 90°), remplacé en <img> — même principe que pour les icônes. */
+async function rasterizeVerticalLabelForPdf(text, boxWidthPx, boxHeightPx, fontSizePx, color){
+  const renderScale = 3;
+  const w = Math.max(1, Math.round(boxWidthPx * renderScale));
+  const h = Math.max(1, Math.round(boxHeightPx * renderScale));
+  const fs = fontSizePx * renderScale;
+  const tmp = document.createElement('canvas');
+  tmp.width = h; tmp.height = w; // dimensions inversees : on dessine a plat puis on pivote
+  const tctx = tmp.getContext('2d');
+  tctx.fillStyle = '#ffffff'; tctx.fillRect(0, 0, tmp.width, tmp.height);
+  tctx.fillStyle = color || '#1c2b36';
+  tctx.font = fs + 'px Arial, sans-serif';
+  tctx.textAlign = 'center';
+  tctx.textBaseline = 'middle';
+  const lines = String(text || '').split('\n').filter(function(l){ return l.length > 0; });
+  const lineHeight = fs * 1.2;
+  const totalH = lines.length * lineHeight;
+  lines.forEach(function(line, i){
+    const y = tmp.height/2 - totalH/2 + lineHeight/2 + i*lineHeight;
+    tctx.fillText(line, tmp.width/2, y);
+  });
+  const out = document.createElement('canvas');
+  out.width = w; out.height = h;
+  const octx = out.getContext('2d');
+  octx.fillStyle = '#ffffff'; octx.fillRect(0, 0, out.width, out.height);
+  octx.save();
+  octx.translate(out.width/2, out.height/2);
+  octx.rotate(Math.PI/2);
+  octx.drawImage(tmp, -tmp.width/2, -tmp.height/2);
+  octx.restore();
+  return out.toDataURL('image/png');
+}
 async function captureForPdf(el, scale){
   const printCss = getPrintOnlyCss();
   return html2canvas(el, {
@@ -3115,6 +3150,25 @@ async function captureForPdf(el, scale){
           img.style.display = 'block';
           svg.replaceWith(img);
         }catch(e){ /* on garde le svg d'origine si la rasterisation échoue */ }
+      }
+      const verticalLabels = Array.from(clonedEl.querySelectorAll('.label-text.vertical'));
+      for (const lbl of verticalLabels){
+        try{
+          const rect = lbl.getBoundingClientRect();
+          if(rect.width < 1 || rect.height < 1) continue;
+          const text = Array.from(lbl.childNodes).map(function(n){
+            return n.nodeName === 'BR' ? '\n' : (n.textContent || '');
+          }).join('');
+          const cs = clonedDoc.defaultView.getComputedStyle(lbl);
+          const png = await rasterizeVerticalLabelForPdf(text, rect.width, rect.height, parseFloat(cs.fontSize), cs.color);
+          const img = clonedDoc.createElement('img');
+          img.src = png;
+          img.style.width = rect.width + 'px';
+          img.style.height = rect.height + 'px';
+          img.style.display = 'block';
+          img.style.margin = '0 auto';
+          lbl.replaceWith(img);
+        }catch(e){ /* on garde le texte d'origine (horizontal, imparfait) si ça échoue */ }
       }
     }
   });
