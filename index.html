@@ -49,13 +49,12 @@
     if(appleLink) appleLink.setAttribute('href', ICON_192);
   }catch(e){}
   try{
+    /* Chrome n'accepte pas d'enregistrer un service worker depuis une URL blob: (testé et confirmé) :
+       il faut un vrai fichier séparé. Sans effet sur file:// (le chemin relatif ne résout à rien de
+       reel et l'appel echoue silencieusement, sans casser le fonctionnement du reste de l'appli) ;
+       actif uniquement une fois la page hébergée aux côtés de sw.js (ex. GitHub Pages). */
     if('serviceWorker' in navigator){
-      var swCode = "self.addEventListener('install',function(e){self.skipWaiting();});"
-        + "self.addEventListener('activate',function(e){e.waitUntil(self.clients.claim());});"
-        + "self.addEventListener('fetch',function(e){});";
-      var blob = new Blob([swCode], {type:'application/javascript'});
-      var swUrl = URL.createObjectURL(blob);
-      navigator.serviceWorker.register(swUrl).catch(function(){});
+      navigator.serviceWorker.register('sw.js').catch(function(){});
     }
   }catch(e){}
 })();
