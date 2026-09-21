@@ -1059,6 +1059,10 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     <button class="ribbon-iconbtn" id="undoBtn" onclick="undo()" disabled title="Annuler (Ctrl+Z)">↶</button>
     <button class="ribbon-iconbtn" id="redoBtn" onclick="redo()" disabled title="Rétablir (Ctrl+Y)">↷</button>
     <div class="spacer"></div>
+    <select class="pill" id="printerModeSelect" style="width:56mm;margin-bottom:0;" onchange="setPrinterMode(this.value)" title="Adapte la mise en page à l'imprimante utilisée">
+      <option value="standard">Imprimante standard</option>
+      <option value="fichero">Imprimante thermique à rouleau (210mm)</option>
+    </select>
     <button class="btn primary" onclick="startPrint()">Imprimer</button>
     <button class="btn" id="shareBtn" onclick="shareOrExportPdf()" title="Générer et afficher le PDF, avec un bouton Partager séparé ensuite">PDF</button>
   </nav>
@@ -3104,7 +3108,29 @@ function confirmPrintInfo(){
   renderPanels();
 }
 function startPrint(){
+  if(printerMode === 'fichero'){ printFicheroPdf(); return; }
   proceedToPrint();
+}
+async function printFicheroPdf(){
+  /* En mode rouleau thermique, l'impression navigateur classique (CSS @media print) ne peut pas
+     reproduire la mise en page pivotée des bandeaux trop larges — on réutilise donc directement
+     le PDF natif (identique à celui du bouton "PDF") et on l'envoie à l'impression via un
+     <iframe> caché, plutôt que de dupliquer toute cette logique dans un second système CSS. */
+  showToast('Génération du PDF…', 0);
+  let result;
+  try{ result = await generateLabelsPdfBlob(); }
+  catch(e){ console.error(e); hideToast(); showToast('Erreur lors de la génération du PDF.', 4000); return; }
+  hideToast();
+  if(!result || !result.hasContent){ showToast('Rien à imprimer : le tableau est vide.', 3000); return; }
+  const url = URL.createObjectURL(result.blob);
+  const iframe = document.createElement('iframe');
+  iframe.style.cssText = 'position:fixed; right:0; bottom:0; width:0; height:0; border:0;';
+  iframe.onload = function(){
+    try{ iframe.contentWindow.focus(); iframe.contentWindow.print(); }catch(e){}
+  };
+  iframe.src = url;
+  document.body.appendChild(iframe);
+  setTimeout(function(){ if(iframe.parentNode) iframe.parentNode.removeChild(iframe); URL.revokeObjectURL(url); }, 60000);
 }
 function prepareLegendPrintData(){
   const entries = collectLegendEntries();
@@ -3444,6 +3470,9 @@ function drawPdfLegendSheet(pdf, entries, info){
   pdf.text('Tableau réalisé le ' + dateDisplay, x, ty);
 }
 async function generateLabelsPdfBlob(){
+  return printerMode === 'fichero' ? generateLabelsPdfBlobFichero() : generateLabelsPdfBlobStandard();
+}
+async function generateLabelsPdfBlobStandard(){
   const { jsPDF } = window.jspdf;
   const marginMm = 10, usableHmm = 210 - marginMm*2, usableWmm = 297 - marginMm*2;
   const gapMm = 3;
@@ -3485,6 +3514,158 @@ async function generateLabelsPdfBlob(){
       ensureRoom(chunkH);
       const h = await drawPdfBandeauChunk(pdf, marginMm, cursorY, label, row.cells, chunk.start, chunk.end);
       cursorY += h + gapMm;
+    }
+  }
+
+  if(entries.length > 0){
+    drawPdfLegendSheet(pdf, entries, info);
+  }
+
+  const blob = pdf.output('blob');
+  const safeName = (clientName || 'etiquettes-tableau-electrique').replace(/[^a-z0-9À-ÿ_ -]/gi,'').trim().replace(/\s+/g,'-');
+  return { blob, filename: (safeName || 'etiquettes-tableau-electrique') + '.pdf', hasContent: hasContent || entries.length > 0 };
+}
+
+/* ---------- Mode "imprimante thermique à rouleau" (Fichero, 210mm de large) ----------
+   Un bandeau trop large pour tenir dans le rouleau est dessiné pivoté à 90° sur un <canvas>
+   (rotation Canvas 2D, sans ambiguïté, contrairement à faire pivoter icônes+texte un par un
+   dans jsPDF) puis inséré comme une seule image dans le PDF — sa vraie longueur se retrouve
+   ainsi sur la hauteur de page, qui n'est jamais limitée sur un rouleau. Jamais découpé. */
+const FICHERO_ROLL_WIDTH_MM = 210;
+const FICHERO_MARGIN_MM = 10;
+const FICHERO_USABLE_WMM = FICHERO_ROLL_WIDTH_MM - FICHERO_MARGIN_MM*2;
+const FICHERO_ROTATE_THRESHOLD = 10;
+function loadImageEl(dataUrl){
+  return new Promise(function(resolve){
+    const img = new Image();
+    img.onload = function(){ resolve(img); };
+    img.src = dataUrl;
+  });
+}
+function ptToMmPx(pt){ return pt/72*25.4; }
+async function drawModuleCellOnCanvas(ctx, cell, cx, wMm, rowTopY){
+  const centerX = cx + wMm/2;
+  if(cell.numberMode){
+    const img = await getIconImageForPdf(cell);
+    if(img){ const el = await loadImageEl(img.dataUrl); ctx.drawImage(el, centerX-img.wMm/2, rowTopY+1.5, img.wMm, img.hMm); }
+    return;
+  }
+  let textTopY = rowTopY + 1.5;
+  if(cell.icon && cell.icon !== 'blank'){
+    const img = await getIconImageForPdf(cell);
+    if(img){
+      const el = await loadImageEl(img.dataUrl);
+      ctx.drawImage(el, centerX-img.wMm/2, rowTopY+1.5, img.wMm, img.hMm);
+      textTopY = rowTopY + 1.5 + img.hMm + 0.8;
+    }
+  }
+  const text = String(cell.text || '').trim();
+  if(!text) return;
+  ctx.fillStyle = 'rgb(28,43,54)';
+  ctx.font = ptToMmPx(7.3).toFixed(2) + 'px Arial, sans-serif';
+  ctx.textBaseline = 'alphabetic';
+  const lines = text.split('\n').filter(function(l){ return l.length > 0; });
+  if(cell.vertical){
+    const colWmm = Math.min(4.2, wMm / Math.max(1, lines.length));
+    const totalW = lines.length * colWmm;
+    let lx = centerX - totalW/2 + colWmm/2;
+    const textBottomY = rowTopY + PDF_MODULE_H_MM - 1;
+    ctx.textAlign = 'left';
+    lines.forEach(function(line){
+      ctx.save();
+      ctx.translate(lx, textBottomY);
+      ctx.rotate(-Math.PI/2);
+      ctx.fillText(line, 0, 0);
+      ctx.restore();
+      lx += colWmm;
+    });
+  } else {
+    ctx.textAlign = 'center';
+    const lineHeightMm = 3;
+    const maxLines = Math.max(1, Math.floor((rowTopY + PDF_MODULE_H_MM - textTopY) / lineHeightMm));
+    lines.slice(0, maxLines).forEach(function(line, i){
+      ctx.fillText(line, centerX, textTopY + 2.6 + i*lineHeightMm*1.25);
+    });
+  }
+}
+async function rasterizeBandeauRotatedForPdf(label, cells, startIdx, endIdx, totalLenMm){
+  const scale = 8; // px par "mm" — bien plus que les ~7.9 px/mm d'une thermique 200dpi, pour rester net
+  const labelHmm = 4.5, stripThicknessMm = PDF_MODULE_H_MM;
+  const tmp = document.createElement('canvas');
+  tmp.width = Math.round(totalLenMm * scale);
+  tmp.height = Math.round((labelHmm + stripThicknessMm) * scale);
+  const tctx = tmp.getContext('2d');
+  tctx.fillStyle = '#ffffff'; tctx.fillRect(0, 0, tmp.width, tmp.height);
+  tctx.scale(scale, scale);
+  tctx.fillStyle = 'rgb(51,51,51)';
+  tctx.font = 'bold ' + ptToMmPx(6.75).toFixed(2) + 'px Arial, sans-serif';
+  tctx.textBaseline = 'alphabetic';
+  tctx.fillText(label.toUpperCase(), 0, 3.2);
+  tctx.strokeStyle = '#000000';
+  tctx.lineWidth = 0.2;
+  const rowTopY = labelHmm;
+  let cx = 0, c = startIdx;
+  while(c < endIdx){
+    let span = 1;
+    while(c + span < endIdx && cells[c + span].merged) span++;
+    const cellWmm = span * PDF_MODULE_W_MM;
+    tctx.beginPath(); tctx.moveTo(cx, rowTopY); tctx.lineTo(cx, rowTopY + PDF_MODULE_H_MM); tctx.stroke();
+    await drawModuleCellOnCanvas(tctx, cells[c], cx, cellWmm, rowTopY);
+    cx += cellWmm;
+    c += span;
+  }
+  tctx.beginPath(); tctx.moveTo(cx, rowTopY); tctx.lineTo(cx, rowTopY + PDF_MODULE_H_MM); tctx.stroke();
+
+  const final = document.createElement('canvas');
+  final.width = tmp.height; final.height = tmp.width;
+  const fctx = final.getContext('2d');
+  fctx.fillStyle = '#ffffff'; fctx.fillRect(0, 0, final.width, final.height);
+  fctx.translate(final.width/2, final.height/2);
+  fctx.rotate(Math.PI/2);
+  fctx.drawImage(tmp, -tmp.width/2, -tmp.height/2);
+
+  return { dataUrl: final.toDataURL('image/png'), wMm: labelHmm + stripThicknessMm, hMm: totalLenMm };
+}
+async function generateLabelsPdfBlobFichero(){
+  const { jsPDF } = window.jspdf;
+  const marginMm = FICHERO_MARGIN_MM, usableWmm = FICHERO_USABLE_WMM;
+  const gapMm = 3;
+  const info = loadCompanyInfo();
+  const entries = collectLegendEntries();
+
+  const cartoucheH = 34, ttH = 6;
+  let hasContent = false;
+  const pieces = [];
+  for (let rIdx = 0; rIdx < rows.length; rIdx++){
+    const row = rows[rIdx];
+    if(row.cells.some(function(c){ return c.icon !== 'blank' || (c.text && c.text.trim() !== ''); })) hasContent = true;
+    const label = `Bandeau ${rIdx+1}`;
+    if(row.cols <= FICHERO_ROTATE_THRESHOLD){
+      pieces.push({ type:'normal', label, cells: row.cells, start:0, end: row.cols, hMm: 4.5 + PDF_MODULE_H_MM });
+    } else {
+      const totalLenMm = row.cols * PDF_MODULE_W_MM;
+      const img = await rasterizeBandeauRotatedForPdf(label, row.cells, 0, row.cols, totalLenMm);
+      pieces.push({ type:'rotated', img, hMm: img.hMm });
+    }
+  }
+
+  let totalH = marginMm*2 + cartoucheH + 4 + ttH + gapMm;
+  pieces.forEach(function(p){ totalH += p.hMm + gapMm; });
+
+  let pdf = new jsPDF({ unit:'mm', format:[FICHERO_ROLL_WIDTH_MM, Math.max(totalH, 100)], orientation:'portrait' });
+  let cursorY = marginMm;
+  await drawPdfCartouche(pdf, marginMm, cursorY, usableWmm, info);
+  cursorY += cartoucheH + 4;
+  drawPdfTerreTension(pdf, marginMm, cursorY, usableWmm);
+  cursorY += ttH + gapMm;
+
+  for (const p of pieces){
+    if(p.type === 'normal'){
+      const h = await drawPdfBandeauChunk(pdf, marginMm, cursorY, p.label, p.cells, p.start, p.end);
+      cursorY += h + gapMm;
+    } else {
+      pdf.addImage(p.img.dataUrl, 'PNG', marginMm, cursorY, p.img.wMm, p.img.hMm);
+      cursorY += p.img.hMm + gapMm;
     }
   }
 
@@ -3974,6 +4155,27 @@ function loadTheme(){
   try{ const stored = localStorage.getItem('etiqelec_theme'); if(THEME_NAMES.includes(stored)) name = stored; }catch(e){}
   applyTheme(name);
 }
+/* ---------- Format d'impression (imprimante standard ou thermique à rouleau) ----------
+   Une imprimante thermique à rouleau (ex. Fichero, ~210mm de large) ne peut pas imprimer plus
+   large que son rouleau : un contenu paysage A4 (297mm) y est automatiquement rétréci par le
+   logiciel de l'imprimante (mesuré chez un utilisateur : bandeau de 235mm imprimé à seulement
+   160mm). Le mode "fichero" évite ce rétrécissement en ne dessinant jamais rien de plus large
+   que le rouleau — quitte à faire pivoter un bandeau trop large de 90°, sa longueur réelle se
+   retrouvant alors sur la hauteur de page (illimitée sur un rouleau), sans le découper. */
+let printerMode = 'standard';
+function setPrinterMode(mode){
+  printerMode = (mode === 'fichero') ? 'fichero' : 'standard';
+  try{ localStorage.setItem('etiqelec_printer_mode', printerMode); }catch(e){}
+  const sel = document.getElementById('printerModeSelect');
+  if(sel) sel.value = printerMode;
+}
+function loadPrinterMode(){
+  let mode = 'standard';
+  try{ const m = localStorage.getItem('etiqelec_printer_mode'); if(m === 'fichero' || m === 'standard') mode = m; }catch(e){}
+  printerMode = mode;
+  const sel = document.getElementById('printerModeSelect');
+  if(sel) sel.value = printerMode;
+}
 function setThemeMode(mode){
   themeMode = (mode === 'auto') ? 'auto' : 'fixed';
   try{ localStorage.setItem('etiqelec_theme_mode', themeMode); }catch(e){}
@@ -4108,6 +4310,7 @@ function welcomeContinue(){
 
 /* ---------- Initialisation ---------- */
 loadTheme();
+loadPrinterMode();
 loadThemeMode();
 document.getElementById('headerLogo').src = LOGO_DATA_URI;
 const homeLogoEl = document.getElementById('homeLogo');
