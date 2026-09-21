@@ -1830,6 +1830,7 @@ const ICON_META = {
   Parafoudre2:  { label:'Parafoudre 2 mod.',     grad:'gradRed', span:2, cat:'protection' },
   Parafoudre4:  { label:'Parafoudre 4 mod.',     grad:'gradRed', span:4, cat:'protection' },
   CoupureGenerale: { label:'Coupure générale',   grad:'gradRed', cat:'protection' },
+  DangerElectrique: { label:'Danger électrique', grad:'gradGold', shape:'triangle', cat:'protection' },
   Coupure:      { label:'Coupure',               grad:'gradSlate', cat:'protection' },
   Delesteur:    { label:'Délesteur',             grad:'gradBlue', cat:'protection' },
   Delesteur2:   { label:'Délesteur 2 mod.',      grad:'gradBlue', span:2, cat:'protection' },
@@ -1895,6 +1896,7 @@ const ICON_META = {
 const ICON_ORDER = Object.keys(ICON_META);
 
 const GLYPHS = {
+  DangerElectrique: `<path d="M35.6,21.4 L24.8,35.8 L32,35.8 L28.4,46.6 L41,30.4 L33.8,30.4 Z" fill="#1c1c1c" stroke="none"/>`,
   Prise: `<g stroke="#1c3d55" stroke-width="2">
       <circle cx="32" cy="32" r="13" fill="#ffffff"/>
       <circle cx="27" cy="27" r="2.2" fill="#1c3d55" stroke="none"/>
@@ -2435,6 +2437,15 @@ function makeBadgeSVG(key){
     </svg>`;
   }
   const glyph = glyphFor(key);
+  if(meta.shape === 'triangle'){
+    /* Pictogramme plein (pas de découpe circulaire) pour le triangle de danger électrique :
+       le triangle doit rester entier et bien visible, contrairement aux autres badges ronds. */
+    return `<svg viewBox="0 0 64 64" class="pict-badge" aria-hidden="true">
+      <polygon points="32,5 60,57 4,57" fill="url(#${meta.grad})" stroke="#8a6a12" stroke-width="1.5" stroke-linejoin="round" filter="url(#softShadow)"/>
+      <path d="M32,5 L21,25 L43,25 Z" fill="url(#gloss)"/>
+      ${glyph}
+    </svg>`;
+  }
   return `<svg viewBox="0 0 64 64" class="pict-badge" aria-hidden="true">
     <circle cx="32" cy="32" r="28" fill="url(#${meta.grad})" stroke-width="1.5" filter="url(#softShadow)"/>
     <ellipse cx="24" cy="16" rx="15" ry="7" fill="url(#gloss)"/>
