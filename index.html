@@ -1047,6 +1047,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
 <div class="sticky-toolbar no-print">
   <nav class="ribbon">
     <button class="ribbon-btn" data-panel="coffret" onclick="togglePanel('coffret')">Coffret électrique</button>
+    <button class="ribbon-btn" data-panel="armoires" onclick="togglePanel('armoires')">Armoires</button>
     <button class="ribbon-btn" data-panel="pictos" onclick="togglePanel('pictos')">Pictogrammes</button>
     <button class="ribbon-btn" data-panel="edition" onclick="togglePanel('edition')">Édition de la cellule</button>
     <button class="ribbon-btn" data-panel="bandeaux" onclick="togglePanel('bandeaux')">Bandeaux</button>
@@ -1081,6 +1082,27 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       <img id="coffretBrandLogo" class="coffret-brand-logo" alt="" style="display:none">
     </div>
     <p class="hint" id="coffretPreview"></p>
+  </div>
+
+  <div class="ribbon-panel" id="panel-armoires" hidden>
+    <h2>Armoires</h2>
+    <p class="hint">Définissez chaque bandeau (plastron) de votre armoire par sa longueur en mm ou son nombre de modules, avec le pas de votre choix (18 mm ou 9 mm).</p>
+    <div class="actions-row">
+      <select class="pill" id="armoireBrand" style="width:56mm;margin-bottom:0;" onchange="onArmoireBrandChange()">
+        <option value="">Choisir une marque</option>
+        <option value="ABB">ABB</option>
+        <option value="Digital Electric">Digital Electric</option>
+        <option value="Hager (Gamma+)">Hager (Gamma+)</option>
+        <option value="Legrand (Drivia)">Legrand (Drivia)</option>
+        <option value="Schneider Electric (Resi9)">Schneider Electric (Resi9)</option>
+      </select>
+      <img id="armoireBrandLogo" class="coffret-brand-logo" alt="" style="display:none">
+    </div>
+    <div id="armoireBandeauxList"></div>
+    <div class="actions-row" style="margin-top:2mm;">
+      <button class="btn" onclick="addArmoireBandeau()">+ Ajouter un bandeau</button>
+      <button class="btn primary" onclick="loadArmoire()">Charger cette armoire</button>
+    </div>
   </div>
 
   <div class="ribbon-panel" id="panel-pictos" hidden>
@@ -1609,14 +1631,22 @@ function loadCoffret(){
   document.getElementById('coffretChangeModal').style.display = 'flex';
 }
 let _pendingCoffretChange = null;
+let _pendingArmoireChange = null;
 function closeCoffretChangeModal(){
   document.getElementById('coffretChangeModal').style.display = 'none';
   _pendingCoffretChange = null;
+  _pendingArmoireChange = null;
 }
 function confirmCoffretChange(keepWork){
+  document.getElementById('coffretChangeModal').style.display = 'none';
+  if(_pendingArmoireChange){
+    const { brand, colsPerRow } = _pendingArmoireChange;
+    applyArmoireChange(brand, colsPerRow, keepWork);
+    _pendingArmoireChange = null;
+    return;
+  }
   if(!_pendingCoffretChange) return;
   const { brand, c } = _pendingCoffretChange;
-  document.getElementById('coffretChangeModal').style.display = 'none';
   applyCoffretChange(brand, c, keepWork);
   _pendingCoffretChange = null;
 }
@@ -1647,6 +1677,118 @@ function applyCoffretChange(brand, c, keepWork){
   sel = {row:0, col:0};
   currentProjectId = null;
   loadedCoffretInfo = {brand, ref:c.ref, rows:c.rows, cols:c.cols, note:c.note||'', img:c.img||'', url:c.url||''};
+  render();
+  refreshProjectSelect();
+  renderCoffretCard();
+  activePanel = null;
+  renderPanels();
+}
+
+/* ---------- Armoires (bandeaux sur mesure : longueur de plastron ou nombre de modules) ---------- */
+let armoireBandeaux = [{ pitch: 18, mm: '', modules: '' }];
+function computeArmoireModules(b){
+  if(b.modules !== '' && b.modules != null){
+    const n = parseInt(b.modules, 10);
+    return (n > 0) ? n : null;
+  }
+  if(b.mm !== '' && b.mm != null){
+    const mm = parseFloat(b.mm);
+    if(mm > 0) return Math.max(1, Math.round(mm / b.pitch));
+  }
+  return null;
+}
+function renderArmoireBandeauxList(){
+  const el = document.getElementById('armoireBandeauxList');
+  if(!el) return;
+  el.innerHTML = armoireBandeaux.map((b, i) => {
+    const computed = computeArmoireModules(b);
+    return `
+    <div class="actions-row" style="margin-bottom:1.5mm;">
+      <span class="hint" style="width:16mm;">Bandeau ${i+1}</span>
+      <label class="hint">Pas
+        <select class="pill" style="width:20mm;margin-bottom:0;" onchange="setArmoireBandeauField(${i},'pitch',this.value)">
+          <option value="18"${b.pitch===18?' selected':''}>18 mm</option>
+          <option value="9"${b.pitch===9?' selected':''}>9 mm</option>
+        </select>
+      </label>
+      <label class="hint">Longueur plastron (mm)
+        <input type="number" min="1" class="pill" style="width:26mm;margin-bottom:0;" value="${escapeAttr(b.mm)}" placeholder="ex : 400" oninput="setArmoireBandeauField(${i},'mm',this.value)">
+      </label>
+      <label class="hint">ou nb de modules
+        <input type="number" min="1" class="pill" style="width:20mm;margin-bottom:0;" value="${escapeAttr(b.modules)}" placeholder="ex : 22" oninput="setArmoireBandeauField(${i},'modules',this.value)">
+      </label>
+      <span class="hint">${computed ? '→ '+computed+' modules' : ''}</span>
+      ${armoireBandeaux.length > 1 ? `<button class="ribbon-iconbtn" onclick="removeArmoireBandeau(${i})" title="Retirer ce bandeau">✕</button>` : ''}
+    </div>`;
+  }).join('');
+}
+function setArmoireBandeauField(i, field, value){
+  if(field === 'pitch') armoireBandeaux[i].pitch = parseFloat(value);
+  else if(field === 'mm'){ armoireBandeaux[i].mm = value; armoireBandeaux[i].modules = ''; }
+  else if(field === 'modules'){ armoireBandeaux[i].modules = value; armoireBandeaux[i].mm = ''; }
+  renderArmoireBandeauxList();
+}
+function addArmoireBandeau(){
+  armoireBandeaux.push({ pitch: 18, mm: '', modules: '' });
+  renderArmoireBandeauxList();
+}
+function removeArmoireBandeau(i){
+  if(armoireBandeaux.length <= 1) return;
+  armoireBandeaux.splice(i, 1);
+  renderArmoireBandeauxList();
+}
+function onArmoireBrandChange(){
+  const brand = document.getElementById('armoireBrand').value;
+  autoApplyThemeForBrand(brand);
+  const logoEl = document.getElementById('armoireBrandLogo');
+  const logoSrc = BRAND_LOGOS[brand];
+  if(logoSrc){ logoEl.src = logoSrc; logoEl.alt = brand; logoEl.style.display = 'block'; }
+  else { logoEl.style.display = 'none'; logoEl.src = ''; }
+}
+function mergeRowsIntoCustomShape(oldRows, colsPerNewRow){
+  /* Comme mergeRowsIntoNewCoffret, mais chaque nouvelle rangée peut avoir un nombre de modules
+     différent (un bandeau d'armoire n'a pas forcément la même longueur qu'un autre). */
+  const merged = [];
+  for (let r = 0; r < colsPerNewRow.length; r++){
+    const newCols = colsPerNewRow[r];
+    if (r < oldRows.length){
+      const oldRow = oldRows[r];
+      const keepCols = Math.min(oldRow.cols, newCols);
+      const cells = [];
+      for (let c = 0; c < newCols; c++){
+        cells.push(c < keepCols
+          ? JSON.parse(JSON.stringify(oldRow.cells[c]))
+          : {icon:'blank', text:'', merged:false, vertical:false, numberMode:false, number:'', piece:''});
+      }
+      merged.push({ cols:newCols, cells });
+    } else {
+      merged.push(createRow(newCols));
+    }
+  }
+  return merged;
+}
+function loadArmoire(){
+  const brand = document.getElementById('armoireBrand').value;
+  const colsPerRow = armoireBandeaux.map(computeArmoireModules);
+  if(colsPerRow.some(c => !c)){
+    alert('Merci de renseigner, pour chaque bandeau, soit sa longueur en mm, soit son nombre de modules.');
+    return;
+  }
+  if(!hasSheetContent()){
+    applyArmoireChange(brand, colsPerRow, false);
+    return;
+  }
+  _pendingArmoireChange = { brand, colsPerRow };
+  document.getElementById('coffretChangeMessage').textContent =
+    'Vous avez déjà des étiquettes sur votre tableau actuel. Changer pour cette armoire (' + colsPerRow.length + ' bandeau(x) : ' + colsPerRow.join(', ') + ' modules) :';
+  document.getElementById('coffretChangeModal').style.display = 'flex';
+}
+function applyArmoireChange(brand, colsPerRow, keepWork){
+  pushUndo();
+  rows = keepWork ? mergeRowsIntoCustomShape(rows, colsPerRow) : colsPerRow.map(c => createRow(c));
+  sel = {row:0, col:0};
+  currentProjectId = null;
+  loadedCoffretInfo = { brand, ref:'Armoire personnalisée', rows:colsPerRow.length, cols:colsPerRow.join(' / '), note:'', img:'', url:'' };
   render();
   refreshProjectSelect();
   renderCoffretCard();
@@ -3914,7 +4056,7 @@ document.addEventListener('webkitfullscreenchange', updateFullscreenBtn);
 })();
 
 /* ---------- Panneaux du ruban ---------- */
-const PANEL_NAMES = ['coffret','pictos','edition','bandeaux','tableaux','renseignement','legend','calib'];
+const PANEL_NAMES = ['coffret','armoires','pictos','edition','bandeaux','tableaux','renseignement','legend','calib'];
 let activePanel = null;
 function togglePanel(name){
   activePanel = (activePanel === name) ? null : name;
@@ -3970,6 +4112,7 @@ refreshProjectSelect();
 activePanel = null;
 renderPanels();
 renderCoffretCard();
+renderArmoireBandeauxList();
 renderCartoucheCompanyInfo();
 syncCartoucheProjectFields();
 loadPrintScale();
