@@ -1078,7 +1078,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
         <option value="">—</option>
       </select>
       <button class="btn primary" onclick="loadCoffret()">Charger ce coffret</button>
-      <img id="coffretBrandLogo" class="coffret-brand-logo" alt="" hidden>
+      <img id="coffretBrandLogo" class="coffret-brand-logo" alt="" style="display:none">
     </div>
     <p class="hint" id="coffretPreview"></p>
   </div>
@@ -1579,8 +1579,12 @@ function refreshCoffretRefs(){
   autoApplyThemeForBrand(brand);
   const logoEl = document.getElementById('coffretBrandLogo');
   const logoSrc = BRAND_LOGOS[brand];
-  if(logoSrc){ logoEl.src = logoSrc; logoEl.alt = brand; logoEl.hidden = false; }
-  else { logoEl.hidden = true; logoEl.src = ''; }
+  /* .coffret-brand-logo force display:block (règle d'auteur), qui l'emporte toujours sur la
+     règle par défaut du navigateur [hidden]{display:none} : l'attribut "hidden" seul ne suffit
+     donc pas à masquer l'image (elle reste display:block avec un src vide → icône d'image
+     cassée visible). On bascule directement style.display, qui a la priorité la plus haute. */
+  if(logoSrc){ logoEl.src = logoSrc; logoEl.alt = brand; logoEl.style.display = 'block'; }
+  else { logoEl.style.display = 'none'; logoEl.src = ''; }
 }
 function updateCoffretPreview(){
   const brand = document.getElementById('coffretBrand').value;
