@@ -1183,6 +1183,11 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     <div class="actions-row" style="margin-top:3mm;">
       <button class="btn primary" onclick="confirmPrintInfo()">Enregistrer et fermer</button>
     </div>
+    <p class="hint" style="margin-top:3mm;">Certaines imprimantes thermiques à rouleau n'impriment que la 1<sup>re</sup> page d'un PDF : si le cartouche + la feuille de repérage font déborder sur plusieurs pages, activez l'option ci-dessous pour n'imprimer que les bandeaux, sur une seule page.</p>
+    <label class="check" style="display:flex; align-items:center; gap:1.2mm;">
+      <input type="checkbox" id="bandeauxOnlyCheckbox" onchange="setBandeauxOnlyMode(this.checked)">
+      Imprimante thermique : bandeaux uniquement (sans renseignements, sur 1 page)
+    </label>
   </div>
 
   <div class="ribbon-panel" id="panel-legend" hidden>
@@ -3235,6 +3240,23 @@ function lightenIconSvgForPdf(svg, isNumberBadge){
     if(text) text.setAttribute('fill', '#1c2b36');
   }
 }
+/* Mode "bandeaux uniquement" : le PDF exporté n'inclut ni le cartouche (logo/société/adresse/QR/client/date),
+   ni la ligne terre/tension, ni la feuille de repérage — seulement les bandeaux, sur une seule page.
+   Sert pour les imprimantes thermiques à rouleau qui n'impriment que la 1re page d'un PDF multi-page. */
+let bandeauxOnlyMode = false;
+function setBandeauxOnlyMode(on){
+  bandeauxOnlyMode = !!on;
+  try{ localStorage.setItem('etiqelec_bandeaux_only', bandeauxOnlyMode ? '1' : '0'); }catch(e){}
+  const cb = document.getElementById('bandeauxOnlyCheckbox');
+  if(cb) cb.checked = bandeauxOnlyMode;
+}
+function loadBandeauxOnlyMode(){
+  let on = false;
+  try{ on = localStorage.getItem('etiqelec_bandeaux_only') === '1'; }catch(e){}
+  bandeauxOnlyMode = on;
+  const cb = document.getElementById('bandeauxOnlyCheckbox');
+  if(cb) cb.checked = bandeauxOnlyMode;
+}
 async function getIconImageForPdf(cell){
   const key = (cell.numberMode ? ('num:' + cell.number) : ('icon:' + cell.icon)) + (lightIconsMode ? ':light' : '');
   if(_pdfIconImgCache.has(key)) return _pdfIconImgCache.get(key);
@@ -3498,14 +3520,16 @@ async function generateLabelsPdfBlob(){
     usedFirstPage = true;
   }
 
-  const cartoucheH = 34;
-  ensureRoom(cartoucheH);
-  await drawPdfCartouche(pdf, marginMm, cursorY, usableWmm, info);
-  cursorY += cartoucheH + 4;
-  const ttH = 6;
-  ensureRoom(ttH);
-  drawPdfTerreTension(pdf, marginMm, cursorY, usableWmm);
-  cursorY += ttH + gapMm;
+  if(!bandeauxOnlyMode){
+    const cartoucheH = 34;
+    ensureRoom(cartoucheH);
+    await drawPdfCartouche(pdf, marginMm, cursorY, usableWmm, info);
+    cursorY += cartoucheH + 4;
+    const ttH = 6;
+    ensureRoom(ttH);
+    drawPdfTerreTension(pdf, marginMm, cursorY, usableWmm);
+    cursorY += ttH + gapMm;
+  }
 
   const maxPerLine = pdfMaxModulesPerLine(usableWmm);
   let hasContent = false;
@@ -3525,7 +3549,7 @@ async function generateLabelsPdfBlob(){
     }
   }
 
-  if(entries.length > 0){
+  if(entries.length > 0 && !bandeauxOnlyMode){
     drawPdfLegendSheet(pdf, entries, info);
   }
 
@@ -4167,6 +4191,7 @@ function welcomeContinue(){
 /* ---------- Initialisation ---------- */
 loadTheme();
 loadLightIconsMode();
+loadBandeauxOnlyMode();
 loadPrinterMode();
 loadThemeMode();
 document.getElementById('headerLogo').src = LOGO_DATA_URI;
