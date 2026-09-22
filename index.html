@@ -1183,8 +1183,12 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     <div class="actions-row" style="margin-top:3mm;">
       <button class="btn primary" onclick="confirmPrintInfo()">Enregistrer et fermer</button>
     </div>
-    <p class="hint" style="margin-top:3mm;">Certaines imprimantes thermiques à rouleau n'impriment que la 1<sup>re</sup> page d'un PDF : si le cartouche + la feuille de repérage font déborder sur plusieurs pages, activez l'option ci-dessous pour n'imprimer que les bandeaux, sur une seule page.</p>
+    <p class="hint" style="margin-top:3mm;">Si le cartouche fait déborder le tableau sur plusieurs pages A4, décochez « Afficher les renseignements » pour ne garder que Client/Date (cartouche réduit) — ou cochez « Bandeaux uniquement » pour une page ne contenant que les bandeaux (utile pour certaines imprimantes thermiques à rouleau qui n'impriment que la 1<sup>re</sup> page d'un PDF).</p>
     <label class="check" style="display:flex; align-items:center; gap:1.2mm;">
+      <input type="checkbox" id="showInfoCheckbox" checked onchange="setShowInfoOnPdf(this.checked)">
+      Afficher les renseignements sur le PDF (logo, société, adresse, QR code)
+    </label>
+    <label class="check" style="display:flex; align-items:center; gap:1.2mm; margin-top:1.5mm;">
       <input type="checkbox" id="bandeauxOnlyCheckbox" onchange="setBandeauxOnlyMode(this.checked)">
       Imprimante thermique : bandeaux uniquement (sans renseignements, sur 1 page)
     </label>
@@ -2775,6 +2779,11 @@ function renderBandeauPrintSplit(row, rIdx){
   return html;
 }
 function renderSheet(){
+  const prevSheetEl = document.getElementById('sheet');
+  const savedScroll = [];
+  if(prevSheetEl){
+    prevSheetEl.querySelectorAll('.bandeau-scroll').forEach(function(el){ savedScroll.push(el.scrollLeft); });
+  }
   let html = '';
   rows.forEach((row, rIdx) => {
     html += `<div class="bandeau" data-row="${rIdx}">`;
@@ -2819,7 +2828,11 @@ function renderSheet(){
     html += renderBandeauPrintSplit(row, rIdx);
     html += `</div>`;
   });
-  document.getElementById('sheet').innerHTML = html;
+  const sheetEl = document.getElementById('sheet');
+  sheetEl.innerHTML = html;
+  sheetEl.querySelectorAll('.bandeau-scroll').forEach(function(el, i){
+    if(savedScroll[i] != null) el.scrollLeft = savedScroll[i];
+  });
   scheduleAutosave();
 }
 
@@ -3112,8 +3125,41 @@ function confirmPrintInfo(){
   activePanel = null;
   renderPanels();
 }
-function startPrint(){
-  proceedToPrint();
+/* L'impression passe par le vrai PDF (généré par generateLabelsPdfBlob, mêmes dimensions
+   physiques en mm que le bouton "PDF") plutôt que par une impression CSS de la page HTML :
+   l'orientation de chaque page est alors fixée dans le PDF lui-même — donc systématiquement
+   correcte (paysage pour les bandeaux) — au lieu de dépendre du pilote d'imprimante pour
+   respecter la règle CSS @page, ce qui n'était pas fiable sur toutes les imprimantes. */
+async function startPrint(){
+  showToast('Génération du PDF pour impression…', 0);
+  let result;
+  try{
+    result = await generateLabelsPdfBlob();
+  }catch(e){
+    console.error(e);
+    hideToast();
+    showToast('Erreur lors de la génération du PDF.', 4000);
+    return;
+  }
+  hideToast();
+  if(!result || !result.hasContent){
+    showToast('Rien à imprimer : le tableau est vide.', 3000);
+    return;
+  }
+  printPdfBlob(result.blob);
+}
+function printPdfBlob(blob){
+  const url = URL.createObjectURL(blob);
+  const win = window.open(url, '_blank');
+  if(!win){
+    showToast('Autorisez les fenêtres pop-up pour imprimer, ou utilisez le bouton PDF.', 5000);
+    URL.revokeObjectURL(url);
+    return;
+  }
+  const tryPrint = function(){ try{ win.print(); }catch(e){} };
+  win.addEventListener('load', tryPrint);
+  setTimeout(tryPrint, 800);
+  setTimeout(function(){ URL.revokeObjectURL(url); }, 60000);
 }
 function prepareLegendPrintData(){
   const entries = collectLegendEntries();
@@ -3257,6 +3303,26 @@ function loadBandeauxOnlyMode(){
   const cb = document.getElementById('bandeauxOnlyCheckbox');
   if(cb) cb.checked = bandeauxOnlyMode;
 }
+/* Affichage ou non du bloc "renseignements" (logo/société/adresse/tél/email/site + QR) dans le
+   cartouche du PDF — décoché, seuls Client/Date restent, et le cartouche se réduit d'autant
+   (voir cartoucheHeightFor) pour aider à tenir plus de bandeaux sur une seule page A4. */
+let showInfoOnPdf = true;
+function setShowInfoOnPdf(on){
+  showInfoOnPdf = !!on;
+  try{ localStorage.setItem('etiqelec_show_info_pdf', showInfoOnPdf ? '1' : '0'); }catch(e){}
+  const cb = document.getElementById('showInfoCheckbox');
+  if(cb) cb.checked = showInfoOnPdf;
+}
+function loadShowInfoOnPdf(){
+  let on = true;
+  try{
+    const v = localStorage.getItem('etiqelec_show_info_pdf');
+    if(v !== null) on = v === '1';
+  }catch(e){}
+  showInfoOnPdf = on;
+  const cb = document.getElementById('showInfoCheckbox');
+  if(cb) cb.checked = showInfoOnPdf;
+}
 async function getIconImageForPdf(cell){
   const key = (cell.numberMode ? ('num:' + cell.number) : ('icon:' + cell.icon)) + (lightIconsMode ? ':light' : '');
   if(_pdfIconImgCache.has(key)) return _pdfIconImgCache.get(key);
@@ -3306,7 +3372,7 @@ async function loadImageNaturalSize(dataUrl){
     img.src = dataUrl;
   });
 }
-const PDF_MODULE_W_MM = 17.8, PDF_MODULE_H_MM = 25;
+const PDF_MODULE_W_MM = 18, PDF_MODULE_H_MM = 25;
 function pdfMaxModulesPerLine(usableWmm){ return Math.max(4, Math.floor(usableWmm / PDF_MODULE_W_MM)); }
 /* Dessine une cellule (icône/badge + texte, ou texte pivoté à 90°) centrée dans [cx, cx+wMm]. */
 async function drawPdfModuleCell(pdf, cell, cx, wMm, rowTopY){
@@ -3372,11 +3438,48 @@ async function drawPdfBandeauChunk(pdf, x, y, label, cells, startIdx, endIdx){
 }
 /* Cartouche (coordonnées + QR) + ligne Terre/Tension : toujours incluses, comme à l'impression
    réelle (voir étape 13), indépendamment de leur visibilité à l'écran au moment du clic. */
-async function drawPdfCartouche(pdf, x, y, wMm, info){
-  const hMm = 34;
+const CARTOUCHE_TOP_STRIP_H = 9;
+/* Hauteur du cartouche calculée d'après son contenu réel (au lieu d'une hauteur fixe de 34mm
+   systématique) : quand peu ou pas de renseignements société sont renseignés/affichés, le
+   cartouche se réduit d'autant sur le PDF, ce qui permet de tenir plus de bandeaux sur une
+   seule page A4. Doit rester synchronisée avec drawPdfCartouche ci-dessous (même calcul). */
+function cartoucheHeightFor(info, showInfo){
+  if(!showInfo) return CARTOUCHE_TOP_STRIP_H + 4;
+  let infoH = 0;
+  if(info.logo) infoH = Math.max(infoH, 16);
+  let lines = 0;
+  if(info.company) lines += 1;
+  lines += [info.address, info.phone, info.email, info.website].filter(Boolean).length;
+  if(lines > 0) infoH = Math.max(infoH, 4 + lines * 4);
+  const hasVcard = !!(info.company || info.phone || info.email || info.website || info.address);
+  if(hasVcard) infoH = Math.max(infoH, 26);
+  return CARTOUCHE_TOP_STRIP_H + 1 + infoH + 3;
+}
+async function drawPdfCartouche(pdf, x, y, wMm, info, showInfo){
+  const hMm = cartoucheHeightFor(info, showInfo);
   pdf.setDrawColor(169, 180, 189);
   pdf.setLineWidth(0.3);
   pdf.roundedRect(x, y, wMm, hMm, 2, 2, 'S');
+
+  pdf.setFont(undefined, 'normal'); pdf.setFontSize(8); pdf.setTextColor(91, 107, 120);
+  pdf.text('Client :', x + 5, y + 6);
+  pdf.setFont(undefined, 'bold'); pdf.setFontSize(9); pdf.setTextColor(28, 43, 54);
+  pdf.text(clientName || '—', x + 5 + pdf.getTextWidth('Client :') + 2, y + 6);
+
+  const dateDisplay = dateValue ? new Date(dateValue+'T00:00:00').toLocaleDateString('fr-FR') : '';
+  const dateColX = x + wMm/2 + 5;
+  pdf.setFont(undefined, 'normal'); pdf.setFontSize(8); pdf.setTextColor(91, 107, 120);
+  pdf.text('Date :', dateColX, y + 6);
+  pdf.setFont(undefined, 'bold'); pdf.setFontSize(9); pdf.setTextColor(28, 43, 54);
+  pdf.text(dateDisplay || '—', dateColX + pdf.getTextWidth('Date :') + 2, y + 6);
+
+  if(!showInfo) return hMm;
+
+  pdf.setDrawColor(196, 204, 211); pdf.setLineWidth(0.2);
+  pdf.line(x + 4, y + CARTOUCHE_TOP_STRIP_H, x + wMm - 4, y + CARTOUCHE_TOP_STRIP_H);
+
+  const infoY = y + CARTOUCHE_TOP_STRIP_H + 1;
+  const infoH = hMm - CARTOUCHE_TOP_STRIP_H - 4;
   let textX = x + 5;
   if(info.logo){
     try{
@@ -3384,11 +3487,11 @@ async function drawPdfCartouche(pdf, x, y, wMm, info){
       const maxW = 26, maxH = 16;
       const ratio = Math.min(maxW / natural.w, maxH / natural.h);
       const lw = natural.w * ratio, lh = natural.h * ratio;
-      pdf.addImage(info.logo, pdfImageFormat(info.logo), x + 5, y + (hMm - lh)/2, lw, lh);
+      pdf.addImage(info.logo, pdfImageFormat(info.logo), x + 5, infoY + (infoH - lh)/2, lw, lh);
       textX = x + 5 + maxW + 3;
     }catch(e){}
   }
-  let ty = y + 9;
+  let ty = infoY + 4;
   if(info.company){
     pdf.setFont(undefined, 'bold'); pdf.setFontSize(10.5); pdf.setTextColor(28, 43, 54);
     pdf.text(info.company, textX, ty);
@@ -3400,26 +3503,10 @@ async function drawPdfCartouche(pdf, x, y, wMm, info){
     ty += 4;
   });
 
-  const rightW = 42;
-  const rightX = x + wMm - rightW - (info.phone || info.email || info.website ? 32 : 4);
-  pdf.setFont(undefined, 'normal'); pdf.setFontSize(8); pdf.setTextColor(91, 107, 120);
-  pdf.text('Client', rightX, y + 8);
-  pdf.setDrawColor(196, 204, 211);
-  pdf.rect(rightX, y + 9, rightW, 6.5, 'S');
-  pdf.setFontSize(9); pdf.setTextColor(28, 43, 54);
-  pdf.text(clientName || '', rightX + 2, y + 13.3);
-  pdf.setFontSize(8); pdf.setTextColor(91, 107, 120);
-  pdf.text('Date', rightX, y + 20);
-  pdf.setDrawColor(196, 204, 211);
-  pdf.rect(rightX, y + 21, rightW, 6.5, 'S');
-  pdf.setFontSize(9); pdf.setTextColor(28, 43, 54);
-  const dateDisplay = dateValue ? new Date(dateValue+'T00:00:00').toLocaleDateString('fr-FR') : '';
-  pdf.text(dateDisplay, rightX + 2, y + 25.3);
-
   const vcard = buildVCard(info.company, info.phone, info.email, info.website, info.address);
   const qrImg = await getQrImageForPdf(vcard);
   if(qrImg){
-    pdf.addImage(qrImg.dataUrl, 'PNG', x + wMm - qrImg.wMm - 4, y + (hMm - qrImg.hMm)/2, qrImg.wMm, qrImg.hMm);
+    pdf.addImage(qrImg.dataUrl, 'PNG', x + wMm - qrImg.wMm - 4, infoY + (infoH - qrImg.hMm)/2, qrImg.wMm, qrImg.hMm);
   }
   return hMm;
 }
@@ -3521,9 +3608,9 @@ async function generateLabelsPdfBlob(){
   }
 
   if(!bandeauxOnlyMode){
-    const cartoucheH = 34;
+    const cartoucheH = cartoucheHeightFor(info, showInfoOnPdf);
     ensureRoom(cartoucheH);
-    await drawPdfCartouche(pdf, marginMm, cursorY, usableWmm, info);
+    await drawPdfCartouche(pdf, marginMm, cursorY, usableWmm, info, showInfoOnPdf);
     cursorY += cartoucheH + 4;
     const ttH = 6;
     ensureRoom(ttH);
@@ -3869,7 +3956,7 @@ function deleteProject(){
 function exportProject(){
   const store = projectsStore();
   const name = (currentProjectId && store[currentProjectId]) ? store[currentProjectId].name : 'tableau-electrique';
-  const data = { app:'Étiqélec', version:'1.1.1', exportedAt:new Date().toISOString(), rows, loadedCoffretInfo, ...getProjectExtras() };
+  const data = { app:'Étiqélec', version:'1.1.1', exportedAt:new Date().toISOString(), name, rows, loadedCoffretInfo, ...getProjectExtras() };
   const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -3889,9 +3976,20 @@ function importProjectFile(file){
       pushUndo();
       rows = normalizeRows(data.rows);
       sel = {row:0, col:0};
-      currentProjectId = null;
       loadedCoffretInfo = data.loadedCoffretInfo || null;
       applyProjectExtras(data);
+
+      /* Enregistre automatiquement le tableau importé dans "Mes tableaux" : utile en particulier
+         lors d'un import sur un nouveau navigateur/appareil, où rien n'était encore enregistré —
+         sans ça, l'import ne remplissait que le tableau en cours (non listé, perdu à la fermeture
+         de l'onglet si l'utilisateur ne pense pas à faire "Enregistrer sous…" lui-même). */
+      const store = projectsStore();
+      const id = 'p' + Date.now();
+      const importedName = (data.name && String(data.name).trim()) || file.name.replace(/\.json$/i, '') || 'Tableau importé';
+      store[id] = { name: importedName, savedAt: Date.now(), rows: JSON.parse(JSON.stringify(rows)), loadedCoffretInfo: loadedCoffretInfo ? JSON.parse(JSON.stringify(loadedCoffretInfo)) : null, ...getProjectExtras() };
+      saveProjectsStore(store);
+      currentProjectId = id;
+
       render();
       refreshProjectSelect();
       renderCoffretCard();
@@ -4035,27 +4133,6 @@ function loadTheme(){
   try{ const stored = localStorage.getItem('etiqelec_theme'); if(THEME_NAMES.includes(stored)) name = stored; }catch(e){}
   applyTheme(name);
 }
-/* ---------- Format d'impression (imprimante standard ou thermique à rouleau) ----------
-   Une imprimante thermique à rouleau (ex. Fichero, ~210mm de large) ne peut pas imprimer plus
-   large que son rouleau : un contenu paysage A4 (297mm) y est automatiquement rétréci par le
-   logiciel de l'imprimante (mesuré chez un utilisateur : bandeau de 235mm imprimé à seulement
-   160mm). Le mode "fichero" évite ce rétrécissement en ne dessinant jamais rien de plus large
-   que le rouleau — quitte à faire pivoter un bandeau trop large de 90°, sa longueur réelle se
-   retrouvant alors sur la hauteur de page (illimitée sur un rouleau), sans le découper. */
-let printerMode = 'standard';
-function setPrinterMode(mode){
-  printerMode = (mode === 'fichero') ? 'fichero' : 'standard';
-  try{ localStorage.setItem('etiqelec_printer_mode', printerMode); }catch(e){}
-  const sel = document.getElementById('printerModeSelect');
-  if(sel) sel.value = printerMode;
-}
-function loadPrinterMode(){
-  let mode = 'standard';
-  try{ const m = localStorage.getItem('etiqelec_printer_mode'); if(m === 'fichero' || m === 'standard') mode = m; }catch(e){}
-  printerMode = mode;
-  const sel = document.getElementById('printerModeSelect');
-  if(sel) sel.value = printerMode;
-}
 function setThemeMode(mode){
   themeMode = (mode === 'auto') ? 'auto' : 'fixed';
   try{ localStorage.setItem('etiqelec_theme_mode', themeMode); }catch(e){}
@@ -4191,8 +4268,8 @@ function welcomeContinue(){
 /* ---------- Initialisation ---------- */
 loadTheme();
 loadLightIconsMode();
+loadShowInfoOnPdf();
 loadBandeauxOnlyMode();
-loadPrinterMode();
 loadThemeMode();
 document.getElementById('headerLogo').src = LOGO_DATA_URI;
 const homeLogoEl = document.getElementById('homeLogo');
