@@ -3150,13 +3150,23 @@ async function startPrint(){
     showToast('Rien à imprimer : le tableau est vide.', 3000);
     return;
   }
-  printPdfBlob(result.blob);
+  printPdfBlob(result.blob, result.filename);
 }
-function printPdfBlob(blob){
+function printPdfBlob(blob, filename){
+  /* Le PDF ne peut s'ouvrir que dans la visionneuse intégrée du navigateur (jamais directement
+     dans une application externe comme Adobe Acrobat — une page web ne peut pas lancer un autre
+     logiciel) : pour que l'utilisateur reparte quand même avec un vrai fichier .pdf réutilisable
+     dans son lecteur habituel, on le télécharge automatiquement en plus d'ouvrir l'impression. */
+  const dlUrl = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = dlUrl; a.download = filename || 'etiquettes-tableau-electrique.pdf';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function(){ URL.revokeObjectURL(dlUrl); }, 4000);
+
   const url = URL.createObjectURL(blob);
   const win = window.open(url, '_blank');
   if(!win){
-    showToast('Autorisez les fenêtres pop-up pour imprimer, ou utilisez le bouton PDF.', 5000);
+    showToast('PDF téléchargé. Autorisez les fenêtres pop-up pour l\'impression automatique.', 5000);
     URL.revokeObjectURL(url);
     return;
   }
@@ -3377,6 +3387,14 @@ async function loadImageNaturalSize(dataUrl){
   });
 }
 const PDF_MODULE_W_MM = 18, PDF_MODULE_H_MM = 25;
+/* La police par défaut de jsPDF (Helvetica, encodage WinAnsi) ne connaît pas les caractères
+   grecs : le Ω (oméga, U+03A9) y est mal interprété et ressort comme un « © » à l'impression
+   (les deux points de code partagent le même octet bas 0xA9). Faute d'embarquer une police
+   Unicode complète pour un seul caractère, on le remplace par "Ohms" uniquement à l'affichage
+   PDF — la saisie à l'écran garde "Ω" normalement (HTML/CSS n'a pas cette limite). */
+function pdfSafeText(str){
+  return String(str || '').replace(/Ω/g, 'Ohms');
+}
 function pdfMaxModulesPerLine(usableWmm){ return Math.max(4, Math.floor(usableWmm / PDF_MODULE_W_MM)); }
 /* Dessine une cellule (icône/badge + texte, ou texte pivoté à 90°) centrée dans [cx, cx+wMm]. */
 async function drawPdfModuleCell(pdf, cell, cx, wMm, rowTopY){
@@ -3520,7 +3538,7 @@ function drawPdfTerreTension(pdf, x, y, wMm){
   pdf.setDrawColor(196, 204, 211);
   pdf.rect(x + 10, y, 32, 6, 'S');
   pdf.setTextColor(28, 43, 54);
-  pdf.text(terreValue || '', x + 12, y + 4);
+  pdf.text(pdfSafeText(terreValue), x + 12, y + 4);
   pdf.setTextColor(91, 107, 120);
   pdf.text('Tension', x + 50, y + 4);
   pdf.rect(x + 65, y, 32, 6, 'S');
