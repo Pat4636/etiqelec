@@ -459,7 +459,11 @@ footer.small{font-size:9px; color:#8b97a1; margin-top:6mm;}
   height:8mm;
   background-image: repeating-linear-gradient(to right, #000 0, #000 1px, transparent 1px, transparent 10mm);
   background-repeat:no-repeat;
-  width: calc(100mm * var(--print-scale, 1));
+  /* 102mm de large (au lieu de 100mm) : les 2 traits de bordure (2px chacun) mordent sur la
+     largeur en box-sizing:border-box, donc mesurer 100mm de bord extérieur à bord extérieur ne
+     laisse que ~98mm entre l'intérieur des deux traits — élargi de 2mm pour qu'il y ait bien
+     100mm mesurés entre les deux traits, comme un utilisateur le fait naturellement à la règle. */
+  width: calc(102mm * var(--print-scale, 1));
   border-left:2px solid #000; border-right:2px solid #000;
 }
 .legend-print-sheet{ display:none; page:legend; }
@@ -1246,9 +1250,9 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
 <div class="coffret-card no-print" id="coffretCard" hidden></div>
 
 <div class="calib-ruler" id="calibRulerPrint">
-  <p style="font-size:12px;">Mire d'étalonnage Étiqélec — largeur nominale <b>100&nbsp;mm</b>. Imprimez sans "ajuster à la page" (échelle 100%), mesurez la barre ci-dessous à la règle.</p>
+  <p style="font-size:12px;">Mire d'étalonnage Étiqélec — largeur nominale <b>100&nbsp;mm</b>. Imprimez sans "ajuster à la page" (échelle 100%), mesurez à la règle la distance entre les deux traits noirs des extrémités.</p>
   <div class="calib-line"></div>
-  <div style="display:flex; justify-content:space-between; width:calc(100mm * var(--print-scale, 1)); font-size:10px; margin-top:1mm;"><span>0</span><span>100 mm</span></div>
+  <div style="display:flex; justify-content:space-between; width:calc(102mm * var(--print-scale, 1)); font-size:10px; margin-top:1mm;"><span>0</span><span>100 mm</span></div>
 </div>
 
 <div class="legend-print-sheet" id="legendPrintSheet">
