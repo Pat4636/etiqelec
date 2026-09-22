@@ -3387,6 +3387,7 @@ async function loadImageNaturalSize(dataUrl){
   });
 }
 const PDF_MODULE_W_MM = 18, PDF_MODULE_H_MM = 25;
+const PDF_BANDEAU_LABEL_H_MM = 4, PDF_BANDEAU_CUT_ZONE_MM = 30;
 /* La police par défaut de jsPDF (Helvetica, encodage WinAnsi) ne connaît pas les caractères
    grecs : le Ω (oméga, U+03A9) y est mal interprété et ressort comme un « © » à l'impression
    (les deux points de code partagent le même octet bas 0xA9). Faute d'embarquer une police
@@ -3440,7 +3441,16 @@ async function drawPdfBandeauChunk(pdf, x, y, label, cells, startIdx, endIdx){
   pdf.setFontSize(6.75);
   pdf.setTextColor(51, 51, 51);
   pdf.text(label.toUpperCase(), x, y + 2.5);
-  const rowY = y + 4.5;
+
+  /* Zone de découpe de 30mm de haut (pointillés au-dessus/en-dessous, comme le rendu écran/CSS
+     .bandeau{border:dashed}) : la bande de modules (25mm) est centrée dedans avec 2.5mm de
+     marge de chaque côté, pour absorber l'imprécision d'une découpe aux ciseaux. L'étiquette
+     "BANDEAU n" reste au-dessus de la zone, hors de la bande réellement collée sur le tableau. */
+  const cutMarginMm = (PDF_BANDEAU_CUT_ZONE_MM - PDF_MODULE_H_MM) / 2;
+  const topDashY = y + PDF_BANDEAU_LABEL_H_MM;
+  const rowY = topDashY + cutMarginMm;
+  const bottomDashY = topDashY + PDF_BANDEAU_CUT_ZONE_MM;
+
   pdf.setDrawColor(0, 0, 0);
   pdf.setLineWidth(0.2);
   pdf.setLineDashPattern([], 0);
@@ -3456,7 +3466,14 @@ async function drawPdfBandeauChunk(pdf, x, y, label, cells, startIdx, endIdx){
     c += span;
   }
   pdf.line(cx, rowY, cx, rowY + PDF_MODULE_H_MM);
-  return (rowY - y) + PDF_MODULE_H_MM;
+
+  pdf.setDrawColor(169, 180, 189);
+  pdf.setLineDashPattern([1, 1], 0);
+  pdf.line(x, topDashY, cx, topDashY);
+  pdf.line(x, bottomDashY, cx, bottomDashY);
+  pdf.setLineDashPattern([], 0);
+
+  return bottomDashY - y;
 }
 /* Cartouche (coordonnées + QR) + ligne Terre/Tension : toujours incluses, comme à l'impression
    réelle (voir étape 13), indépendamment de leur visibilité à l'écran au moment du clic. */
@@ -3651,7 +3668,7 @@ async function generateLabelsPdfBlob(){
       const label = chunks.length > 1
         ? `Bandeau ${rIdx+1}` + (idx===0 ? '' : ` (suite${idx>1?' '+(idx+1):''})`)
         : `Bandeau ${rIdx+1}`;
-      const chunkH = 4.5 + PDF_MODULE_H_MM;
+      const chunkH = PDF_BANDEAU_LABEL_H_MM + PDF_BANDEAU_CUT_ZONE_MM;
       ensureRoom(chunkH);
       const h = await drawPdfBandeauChunk(pdf, marginMm, cursorY, label, row.cells, chunk.start, chunk.end);
       cursorY += h + gapMm;
